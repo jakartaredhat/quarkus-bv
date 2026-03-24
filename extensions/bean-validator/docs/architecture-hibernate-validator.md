@@ -5,7 +5,11 @@
 Hibernate Validator is the reference implementation of the Jakarta Bean Validation specification (currently targeting 3.1). It is a mature, full-featured validation framework with extensive support for custom constraints, CDI integration, XML configuration, and compile-time annotation processing.
 
 **Version:** 9.2.0-SNAPSHOT
-**Total Java files:** ~1,092 (engine: 798, annotation-processor: 167, cdi: 65, test-utils: 11, integration tests: 51)
+**License:** Apache 2.0
+**Total Java Source Files:** 871 (engine: 798, annotation-processor: 53, cdi: 20)
+**Total Test Files:** 1,048
+**Engine Source Lines:** ~61,646
+**Localization:** 27 languages
 
 ---
 
@@ -13,19 +17,28 @@ Hibernate Validator is the reference implementation of the Jakarta Bean Validati
 
 ```
 hibernate-validator/
-├── engine/                    # Core validation engine (798 files)
-├── cdi/                       # CDI portable extension (65 files)
-├── annotation-processor/      # Compile-time constraint checker (167 files)
+├── engine/                    # Core validation engine (798 source files, ~61,646 lines)
+├── cdi/                       # CDI portable extension (20 source files, 45 test files)
+├── annotation-processor/      # Compile-time constraint checker (53 source files, 114 test files)
 ├── tck-runner/                # Jakarta BV TCK compliance runner
 ├── test-utils/                # Shared test utilities (11 files)
-├── integrationtest/           # WildFly + Java modules integration tests
-│   ├── wildfly/               # WildFly server tests (51 files)
+├── integrationtest/           # Integration tests
+│   ├── wildfly/               # WildFly server tests (51+ files)
 │   └── java/modules/          # Java module system tests
+│       ├── simple/            # Basic module validation
+│       ├── no-el/             # EL-free environment
+│       ├── cdi/               # CDI module tests
+│       └── test-utils/        # Module test utilities
 ├── performance/               # JMH benchmarks
-├── documentation/             # Generated docs
+├── documentation/             # Generated docs (pom.xml + src)
 ├── build/                     # Build infrastructure
-├── parents/                   # Parent POMs (internal/public)
-├── bom/                       # Bill of Materials
+│   ├── build-config/          # Plugin & dependency management
+│   ├── enforcer/              # Maven enforcer rules
+│   └── reports/               # API/SPI change reports
+├── parents/                   # Parent POMs
+│   ├── internal/              # Internal parent
+│   └── public/                # Public parent (Spotless, Checkstyle, Forbidden APIs)
+├── bom/                       # Bill of Materials (hibernate-validator-bom)
 └── distribution/              # Distribution packaging
 ```
 
@@ -38,14 +51,15 @@ graph TB
     subgraph API["PUBLIC API"]
         VF["ValidatorFactory<br/>(Jakarta BV API)"]
         V["Validator<br/>(Jakarta BV API)"]
-        VFI["ValidatorFactoryImpl<br/>- config container<br/>- thread-safe cache<br/>- creates validators"]
-        VI["ValidatorImpl<br/>- validate()<br/>- validateProperty()<br/>- validateValue()"]
+        VFI["ValidatorFactoryImpl (20 KB)<br/>- config container<br/>- thread-safe cache<br/>- creates validators"]
+        VI["ValidatorImpl (60 KB)<br/>- validate()<br/>- validateProperty()<br/>- validateValue()<br/>- validateParameters()<br/>- validateReturnValue()"]
         VF --> VFI
         V --> VI
         VFI --> VI
+        PSVFI["PredefinedScopeValidatorFactoryImpl (18 KB)<br/>- Pre-scoped for high-frequency validation<br/>- Limited mutability"]
     end
 
-    subgraph META["METADATA LAYER"]
+    subgraph META["METADATA LAYER (81 files)"]
         subgraph BMM["BeanMetaDataManager"]
             BMD["BeanMetaDataImpl<br/>- class constraints<br/>- property constraints<br/>- executable constraints<br/>- group sequences"]
             MC["MetaConstraint&lt;A&gt;<br/>- constraint location<br/>- constraint descriptor<br/>- extraction path<br/>- links to ConstraintTree"]
@@ -55,31 +69,39 @@ graph TB
             XP["XML<br/>Provider"]
             PP["Programmatic<br/>Provider"]
         end
-        CL["Constraint Location Hierarchy:<br/>Bean | Field | Getter | Parameter | ReturnValue | TypeArgument"]
+        subgraph LOCATIONS["Constraint Location Hierarchy (10 files)"]
+            CL["Bean | Field | Getter | Parameter<br/>ReturnValue | TypeArgument<br/>CrossParameter"]
+        end
+        subgraph METADATA_PIPELINE["Pipeline: raw (9) -> aggregated (29) -> descriptor (12)"]
+            RAW["Raw metadata from source"] --> AGG["Aggregated metadata (merged)"] --> DESC["Descriptors (final)"]
+        end
     end
 
-    subgraph ENGINE["VALIDATION ENGINE"]
-        VCB["ValidationContext<br/>Builder"] --> BBVC["BaseBeanValidation<br/>Context<br/>- metadata refs<br/>- validator manager<br/>- message interpolator<br/>- traversable resolver<br/>- value extractor mgr"]
-        CVM["ConstraintValidatorManager<br/>- caches initialized validators<br/>- CacheKey: annotation+type+ctx"]
+    subgraph ENGINE["VALIDATION ENGINE (135 files)"]
+        VCB["ValidationContext<br/>Builder"] --> BBVC["BaseBeanValidation<br/>Context (11 files)<br/>- metadata refs<br/>- validator manager<br/>- message interpolator<br/>- traversable resolver<br/>- value extractor mgr"]
+        CVM["ConstraintValidatorManager (16 files)<br/>- caches initialized validators<br/>- CacheKey: annotation+type+ctx<br/>- PredefinedScope variant"]
         CT["ConstraintTree<br/>- hierarchical constraint model<br/>- composition rules<br/>- matched validators per type"]
-        VOG["ValidationOrderGenerator<br/>- resolves group execution order<br/>- expands group inheritance<br/>- handles @GroupSequence"]
-        VC["ValueContext<br/>- current object<br/>- current property<br/>- cascading info"]
+        VOG["ValidationOrderGenerator (7 files)<br/>- resolves group execution order<br/>- expands group inheritance<br/>- handles @GroupSequence"]
+        VC["ValueContext (4 files)<br/>- current object<br/>- current property<br/>- cascading info"]
     end
 
-    subgraph VALIDATORS["CONSTRAINT VALIDATORS"]
-        subgraph BV["Jakarta BV Standard (@bv)"]
-            BV1["@NotNull, @NotEmpty, @NotBlank<br/>@Size, @Min, @Max, @Pattern<br/>@Email, @Digits, @Past, @Future<br/>@Positive, @Negative<br/>@AssertTrue/False"]
+    subgraph VALIDATORS["CONSTRAINT VALIDATORS (261 files)"]
+        subgraph BV["Jakarta BV Standard"]
+            BV1["@NotNull, @NotEmpty, @NotBlank<br/>@Size, @Min, @Max, @Pattern<br/>@Email, @Digits, @Past, @Future<br/>@Positive, @Negative<br/>@AssertTrue/False<br/>@DecimalMin/Max, @PastOrPresent, @FutureOrPresent"]
         end
-        subgraph HV["Hibernate Extensions (@hv)"]
-            HV1["@CreditCardNumber, @EAN, @ISBN<br/>@BitcoinAddress, @URL, @UUID<br/>@Normalized, @UniqueElements<br/>@DurationMin/Max<br/>Regional: BR_CPF, PL_NIP, RU_INN"]
+        subgraph HV["Hibernate Extensions (26+)"]
+            HV1["@CreditCardNumber, @EAN, @ISBN<br/>@BitcoinAddress, @URL, @UUID<br/>@Normalized, @UniqueElements<br/>@DurationMin/Max, @IpAddress<br/>@CodePointLength, @Length"]
+            HV2["Regional: BR_CPF, BR_CNPJ,<br/>PL_NIP, PL_PESEL, PL_REGON,<br/>RU_INN, KOR_RRN"]
         end
-        VE["Value Extractors<br/>List, Map, Set, Iterable, Optional,<br/>OptionalInt/Long/Double, arrays"]
+        VE["Value Extractors (32 files)<br/>List, Map, Set, Iterable, Optional,<br/>OptionalInt/Long/Double,<br/>8 primitive arrays, Object[],<br/>JavaFX Observable/Properties"]
     end
 
     subgraph CROSS["CROSS-CUTTING CONCERNS"]
-        MI["Message Interpolation<br/>- TermInterpolator<br/>- ElTermResolver<br/>- ParameterTermResolver"]
-        PV["Path & Violation<br/>- MutablePath<br/>- MutableNode<br/>- ConstraintViolationImpl"]
-        XML["XML Mapping<br/>- validation.xml<br/>- constraint mappings"]
+        MI["Message Interpolation (29 files)<br/>- TermInterpolator, parser/ (8 files)<br/>- EL resolution: el/ (8 files)<br/>- ParameterTermResolver<br/>- 27 language bundles"]
+        PV["Path & Violation (5+)<br/>- MutablePath, MutableNode<br/>- ConstraintViolationImpl (9.3 KB)"]
+        XML["XML Mapping (33 files)<br/>- validation.xml parsing<br/>- constraint mappings"]
+        PROPS["Properties (18 files)<br/>- JavaBean property discovery"]
+        UTIL["Utilities (64 files)<br/>- privileged actions<br/>- annotation processing<br/>- class hierarchy<br/>- JBoss logging<br/>- stereotypes (@Immutable, @ThreadSafe)"]
     end
 
     API --> META --> ENGINE --> VALIDATORS --> CROSS
@@ -97,11 +119,42 @@ graph TB
 
 ---
 
+## Engine Internal Package Breakdown
+
+| Package | Files | Purpose |
+|---------|-------|---------|
+| `internal/engine/constraintvalidation/` | 16 | Constraint validator caching, initialization, management |
+| `internal/engine/messageinterpolation/` | 29 | Message parsing, EL resolution, parameter substitution |
+| `internal/engine/valueextraction/` | 32 | Container value extraction (26 built-in extractors) |
+| `internal/engine/validationcontext/` | 11 | Validation context builders and implementations |
+| `internal/engine/groups/` | 7 | Group ordering, inheritance, @GroupSequence |
+| `internal/engine/resolver/` | 6 | Traversable resolver implementation |
+| `internal/engine/path/` | 5 | Property path construction |
+| `internal/engine/valuecontext/` | 4 | Value context for current validation target |
+| `internal/engine/tracking/` | 3 | Bean processing tracking |
+| `internal/engine/scripting/` | 2 | Script evaluation engine |
+| `internal/engine/constraintdefinition/` | 1 | Constraint definition handling |
+| `internal/metadata/aggregated/` | 29 | Aggregated metadata (Bean, Property, Executable, Parameter, ReturnValue, Cascading) |
+| `internal/metadata/descriptor/` | 12 | Constraint descriptors (final, immutable) |
+| `internal/metadata/location/` | 10 | Constraint location tracking |
+| `internal/metadata/raw/` | 9 | Raw metadata from annotations |
+| `internal/metadata/core/` | 8 | Core metadata structures, ConstraintHelper |
+| `internal/metadata/provider/` | 5 | Metadata providers (Annotation, XML, Programmatic) |
+| `internal/metadata/facets/` | 3 | Metadata facet interfaces |
+| `internal/constraintvalidators/bv/` | 235+ | Jakarta BV standard validators (Number, Size, Time, Pattern, etc.) |
+| `internal/constraintvalidators/hv/` | 26+ | Hibernate extended validators |
+| `internal/xml/` | 33 | XML constraint mapping and configuration parsing |
+| `internal/util/` | 64 | Utilities, logging, privileged actions, annotation processing |
+| `internal/properties/` | 18 | JavaBean property discovery |
+| `internal/cfg/` | 20 | Configuration implementation |
+
+---
+
 ## CDI Module Architecture
 
 ```mermaid
 graph TB
-    subgraph CDI["CDI Portable Extension"]
+    subgraph CDI["CDI Portable Extension (20 source files)"]
         VE["ValidationExtension (CDI Extension)"]
         VE -->|BeforeBeanDiscovery| RB["Register beans"]
         VE -->|ProcessAnnotatedType| SV["Scan validators"]
@@ -112,10 +165,30 @@ graph TB
 
         CVF --> VFB
         CVF --> ICVF
+
+        subgraph INTERCEPT["Interceptor Framework"]
+            VIS["ValidationInterceptor (SPI)"]
+            VEAT["ValidationEnabledAnnotatedType"]
+            VEAM["ValidationEnabledAnnotatedMethod"]
+            VEAC["ValidationEnabledAnnotatedConstructor"]
+            VIS --> VEAT & VEAM & VEAC
+        end
+
+        subgraph INTERNAL["Internal Utilities"]
+            VPH["ValidationProviderHelper"]
+            GPSH["GetterPropertySelectionStrategyHelper"]
+            IMH["InheritedMethodsHelper"]
+            BCVU["BuiltInConstraintValidatorUtils"]
+            DBI["DestructibleBeanInstance"]
+        end
     end
+
+    SVCFILE["META-INF/services/<br/>jakarta.enterprise.inject.spi.Extension"]
 
     style CDI fill:#e8f5e9,stroke:#2E7D32
     style VE fill:#c8e6c9,stroke:#388E3C
+    style INTERCEPT fill:#dcedc8,stroke:#558B2F
+    style INTERNAL fill:#f1f8e9,stroke:#689F38
 ```
 
 ---
@@ -124,22 +197,36 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph ANNPROC["Compile-Time Constraint Validation"]
+    subgraph ANNPROC["Compile-Time Constraint Validation (53 source files, 114 test files)"]
         CVP["ConstraintValidationProcessor<br/>(AbstractProcessor)<br/>- Processes all constraint annotations at javac time<br/>- Options: diagnosticKind, verbose, method support"]
         CVP --> CAV["ConstraintAnnotationVisitor<br/>- Traverses AST for constraint annotations<br/>- Delegates to validation checks"]
         CAV --> CHECKS["Validation Checks"]
-        CHECKS --> C1["AnnotationParametersGroupsCheck"]
-        CHECKS --> C2["AnnotationDefaultMessageCheck"]
-        CHECKS --> C3["AnnotationParametersPatternCheck"]
-        CHECKS --> C4["AnnotationParametersDigitsCheck"]
-        CHECKS --> C5["AnnotationParametersScriptAssertCheck"]
-        CHECKS --> C6["... (many more constraint-specific checks)"]
+
+        subgraph ANNCHECKS["Annotation Type Checks (5)"]
+            C_AT["AnnotationTypeCheck<br/>AnnotationTypeMemberCheck<br/>RetentionPolicyCheck<br/>TargetCheck<br/>PrimitiveCheck"]
+        end
+
+        subgraph PARAMCHECKS["Parameter Checks (7+)"]
+            C_P["AnnotationParametersGroupsCheck<br/>AnnotationParametersPatternCheck<br/>AnnotationParametersDigitsCheck<br/>AnnotationParametersSizeLengthCheck<br/>AnnotationParametersScriptAssertCheck<br/>AnnotationParametersDecimalMinMaxCheck"]
+        end
+
+        subgraph DEFCHECKS["Constraint Definition Checks"]
+            C_D["AnnotationDefaultMessageCheck<br/>AnnotationMessageCheck<br/>StaticCheck<br/>TypeCheck"]
+        end
+
+        subgraph METHODCHECKS["Method Checks"]
+            C_M["MethodAnnotationCheck<br/>ParametersMethodOverrideCheck<br/>ReturnValueMethodOverrideCheck<br/>GetterCheck"]
+        end
+
+        CHECKS --> ANNCHECKS & PARAMCHECKS & DEFCHECKS & METHODCHECKS
     end
 
     style ANNPROC fill:#fff3e0,stroke:#E65100
     style CVP fill:#ffe0b2,stroke:#F57C00
-    style CAV fill:#ffe0b2,stroke:#F57C00
-    style CHECKS fill:#ffcc80,stroke:#EF6C00
+    style ANNCHECKS fill:#ffcc80,stroke:#EF6C00
+    style PARAMCHECKS fill:#ffcc80,stroke:#EF6C00
+    style DEFCHECKS fill:#ffcc80,stroke:#EF6C00
+    style METHODCHECKS fill:#ffcc80,stroke:#EF6C00
 ```
 
 ---
@@ -167,6 +254,7 @@ Key extension points are strategy interfaces:
 
 ### 4. Visitor Pattern
 - `ElementVisitor` for AST traversal in the annotation processor
+- `ConstraintAnnotationVisitor` processes constraint annotations
 - Value extraction uses a visitor-like traversal pattern
 
 ### 5. Caching / Thread-Safety
@@ -174,14 +262,18 @@ Key extension points are strategy interfaces:
 - `ConstraintValidatorManagerImpl` caches initialized validators by composite key
 - `ValidationOrderGenerator` caches resolved group sequences
 - Annotations: `@Immutable`, `@ThreadSafe` used for documentation
+- `PredefinedScopeValidatorFactoryImpl` provides optimized caching for known-scope validation
 
 ### 6. SPI (Service Provider Interface)
 Packages under `org.hibernate.validator.spi.*` define extension points:
-- `spi.cfg` - Configuration
-- `spi.group` - Group sequence providers
-- `spi.messageinterpolation` - Custom message interpolation
-- `spi.scripting` - Script evaluation
-- `spi.properties` - Property selection
+- `spi.cfg` - Configuration (`ConstraintMappingContributor`)
+- `spi.group` - Group sequence providers (`DefaultGroupSequenceProvider`)
+- `spi.messageinterpolation` - Custom message interpolation (`LocaleResolver`)
+- `spi.scripting` - Script evaluation (`ScriptEvaluatorFactory`, `AbstractCachingScriptEvaluatorFactory`)
+- `spi.properties` - Property selection (`GetterPropertySelectionStrategy`)
+- `spi.nodenameprovider` - Property naming (`PropertyNodeNameProvider`)
+- `spi.resourceloading` - Resource loading (`ResourceBundleLocator`)
+- `spi.tracking` - Bean processing tracking (`ProcessedBeansTrackingVoter`)
 
 ---
 
@@ -189,25 +281,26 @@ Packages under `org.hibernate.validator.spi.*` define extension points:
 
 ```mermaid
 graph TB
-    subgraph DISCOVERY["1. Raw Metadata Discovery"]
+    subgraph DISCOVERY["1. Raw Metadata Discovery (9 files)"]
         AP2["AnnotationProvider<br/>(class scanning)"]
         XP2["XML Provider<br/>(mapping files)"]
         PP2["ProgrammaticProvider<br/>(fluent API)"]
     end
 
-    subgraph AGGREGATION["2. Aggregation"]
-        BMDB["BeanMetaDataBuilder<br/>- merges hierarchy<br/>- resolves groups"]
+    subgraph AGGREGATION["2. Aggregation (29 files)"]
+        BMDB["BeanMetaDataBuilder<br/>- merges hierarchy<br/>- resolves groups<br/>- handles cascading"]
     end
 
-    subgraph DESCRIPTORS["3. Descriptors"]
+    subgraph DESCRIPTORS["3. Descriptors (12 files)"]
         BMD2["BeanMetaDataImpl"]
         BDI["BeanDescriptorImpl"]
-        CDI2["ConstraintDescriptor"]
+        CDI2["ConstraintDescriptorImpl"]
         PDI["PropertyDescriptor"]
+        EDI["ExecutableDescriptor"]
     end
 
     AP2 & XP2 & PP2 --> BMDB
-    BMDB --> BMD2 & BDI & CDI2 & PDI
+    BMDB --> BMD2 & BDI & CDI2 & PDI & EDI
 
     style DISCOVERY fill:#e3f2fd,stroke:#1565C0
     style AGGREGATION fill:#e8f5e9,stroke:#2E7D32
@@ -246,6 +339,27 @@ flowchart TD
 
 ---
 
+## Built-in Constraint Validators Summary
+
+### Jakarta BV Standard Validators
+- **Boolean:** `@AssertTrue`, `@AssertFalse`
+- **Null checks:** `@NotNull`, `@Null`, `@NotEmpty`, `@NotBlank`
+- **String:** `@Pattern`, `@Email`
+- **Size:** `@Size`, `@Digits`
+- **Number:** `@Min`, `@Max`, `@DecimalMin`, `@DecimalMax`, `@Positive`, `@PositiveOrZero`, `@Negative`, `@NegativeOrZero`
+- **Temporal:** `@Past`, `@PastOrPresent`, `@Future`, `@FutureOrPresent` (8 variants each for different date/time types)
+
+### Hibernate Extended Validators (26+)
+- **Generic:** `@UniqueElements`, `@Normalized`, `@CodePointLength`, `@Length`
+- **String/Network:** `@URL`, `@UUID`, `@IpAddress`, `@Email` (extended)
+- **Financial:** `@CreditCardNumber` (`LuhnCheck`, `Mod10Check`, `Mod11Check`), `@BitcoinAddress`
+- **Document:** `@EAN`, `@ISBN`
+- **Duration:** `@DurationMin`, `@DurationMax`
+- **Script:** `@ScriptAssert`, `@ParameterScriptAssert`
+- **Regional:** BR (`@CPF`, `@CNPJ`), PL (`@PESEL`, `@NIP`, `@REGON`), RU (`@INN`), KOR (`@KorRRN`)
+
+---
+
 ## Key Dependencies
 
 - Jakarta Validation API 3.1
@@ -254,3 +368,4 @@ flowchart TD
 - ParaNamer 2.8.3 - parameter name detection
 - Jakarta CDI API (for CDI module)
 - WildFly 39.0.1 (for integration testing)
+- SPI registration: `META-INF/services/jakarta.validation.spi.ValidationProvider` -> `org.hibernate.validator.HibernateValidator`
