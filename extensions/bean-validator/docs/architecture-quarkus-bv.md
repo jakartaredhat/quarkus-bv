@@ -112,6 +112,247 @@ graph TB
 
 ---
 
+## Jakarta Bean Validation Runtime Implementation
+
+The Quarkus Bean Validator uses its own lightweight implementation of the Jakarta BV API, located in the `independent-projects/bean-validation/runtime` module (62 Java files). This is **not** Hibernate Validator - it is a from-scratch implementation optimized for build-time metadata.
+
+### Jakarta BV API Implementation Class Hierarchy
+
+```mermaid
+classDiagram
+    direction TB
+
+    class ValidationProvider~T~ {
+        <<jakarta.validation.spi>>
+        +createSpecializedConfiguration(BootstrapState) T
+        +createGenericConfiguration(BootstrapState) Configuration
+        +buildValidatorFactory(ConfigurationState) ValidatorFactory
+    }
+
+    class QuarkusValidationProvider {
+        -RuntimeConfig config$
+        +configure(metadata, factory, locale, annotationMap, accessorMap)$
+        +createAnnotationLiteral(type, attrs)$ Annotation
+        +getAccessor(beanClassName)$ BeanPropertyAccessor
+        +resolveValidatorInstantiator(className)$ ValidatorInstantiator
+        +createSpecializedConfiguration(BootstrapState) QuarkusConfiguration
+        +buildValidatorFactory(ConfigurationState) ValidatorFactory
+    }
+    ValidationProvider <|.. QuarkusValidationProvider
+
+    class Configuration~T~ {
+        <<jakarta.validation>>
+        +messageInterpolator(MessageInterpolator) T
+        +constraintValidatorFactory(ConstraintValidatorFactory) T
+        +traversableResolver(TraversableResolver) T
+        +buildValidatorFactory() ValidatorFactory
+    }
+
+    class ConfigurationState {
+        <<jakarta.validation.spi>>
+        +getMessageInterpolator() MessageInterpolator
+        +getConstraintValidatorFactory() ConstraintValidatorFactory
+        +getTraversableResolver() TraversableResolver
+    }
+
+    class QuarkusConfiguration {
+        -BeanValidationMetadata beanValidationMetadata
+        -MessageInterpolator messageInterpolator
+        -TraversableResolver traversableResolver
+        -ConstraintValidatorFactory constraintValidatorFactory
+        +setBeanValidationMetadata(BeanValidationMetadata)
+        +ignoreXmlConfiguration() QuarkusConfiguration
+        +buildValidatorFactory() ValidatorFactory
+    }
+    Configuration <|.. QuarkusConfiguration
+    ConfigurationState <|.. QuarkusConfiguration
+    QuarkusValidationProvider --> QuarkusConfiguration : creates
+
+    class ValidatorFactory {
+        <<jakarta.validation>>
+        +getValidator() Validator
+        +getMessageInterpolator() MessageInterpolator
+        +getConstraintValidatorFactory() ConstraintValidatorFactory
+        +close()
+    }
+
+    class QuarkusValidatorFactory {
+        -BeanValidationMetadata metadata
+        -MessageInterpolator messageInterpolator
+        -TraversableResolver traversableResolver
+        -ConstraintValidatorFactory constraintValidatorFactory
+        -QuarkusValidator validator
+        +getValidator() Validator
+        +usingContext() ValidatorContext
+    }
+    ValidatorFactory <|.. QuarkusValidatorFactory
+    QuarkusValidationProvider --> QuarkusValidatorFactory : creates
+    QuarkusConfiguration --> QuarkusValidatorFactory : configures
+
+    class Validator {
+        <<jakarta.validation>>
+        +validate(object, groups) Set~ConstraintViolation~
+        +validateProperty(object, propertyName, groups) Set~ConstraintViolation~
+        +validateValue(beanType, propertyName, value, groups) Set~ConstraintViolation~
+        +getConstraintsForClass(clazz) BeanDescriptor
+        +forExecutables() ExecutableValidator
+    }
+
+    class QuarkusValidator {
+        -BeanValidationMetadata metadata
+        -Map descriptorCache
+        -Map validatorCache
+        -Map groupSequenceStepsCache
+        -QuarkusExecutableValidator executableValidator
+        +validate(object, groups) Set~ConstraintViolation~
+        +validateProperty(object, propertyName, groups) Set~ConstraintViolation~
+        +getConstraintsForClass(clazz) BeanDescriptor
+        +forExecutables() ExecutableValidator
+    }
+    Validator <|.. QuarkusValidator
+    QuarkusValidatorFactory --> QuarkusValidator : creates
+
+    class ConstraintValidatorFactory {
+        <<jakarta.validation>>
+        +getInstance(key) ConstraintValidator
+        +releaseInstance(instance)
+    }
+
+    class ArcConstraintValidatorFactory {
+        -ValidatorInstantiator validatorInstantiator
+        +getInstance(key) ConstraintValidator
+        +releaseInstance(instance)
+    }
+    ConstraintValidatorFactory <|.. ArcConstraintValidatorFactory
+
+    class BeanDescriptor {
+        <<jakarta.validation.metadata>>
+        +isBeanConstrained() boolean
+        +getConstraintsForProperty(name) PropertyDescriptor
+        +getConstrainedProperties() Set~PropertyDescriptor~
+        +getConstraintsForMethod(name, params) MethodDescriptor
+        +getConstrainedMethods(type) Set~MethodDescriptor~
+        +getConstraintsForConstructor(params) ConstructorDescriptor
+    }
+
+    class BeanDescriptorImpl {
+        -Class elementClass
+        -Map propertyDescriptors
+        -Map methodDescriptors
+        -Map constructorDescriptors
+        +build(beanClass, metadata)$ BeanDescriptorImpl
+        +isBeanConstrained() boolean
+        +getConstrainedProperties() Set~PropertyDescriptor~
+    }
+    BeanDescriptor <|.. BeanDescriptorImpl
+    QuarkusValidator --> BeanDescriptorImpl : creates/caches
+
+    QuarkusValidatorFactory --> ArcConstraintValidatorFactory : uses
+    QuarkusValidator --> ArcConstraintValidatorFactory : uses
+```
+
+### Descriptor Class Hierarchy (io.quarkus.bean.validation.impl.metadata.descriptor)
+
+```mermaid
+classDiagram
+    direction TB
+
+    class ElementDescriptor {
+        <<jakarta.validation.metadata>>
+    }
+    class BeanDescriptor {
+        <<jakarta.validation.metadata>>
+    }
+    class PropertyDescriptor {
+        <<jakarta.validation.metadata>>
+    }
+    class MethodDescriptor {
+        <<jakarta.validation.metadata>>
+    }
+    class ConstructorDescriptor {
+        <<jakarta.validation.metadata>>
+    }
+    class ParameterDescriptor {
+        <<jakarta.validation.metadata>>
+    }
+    class ReturnValueDescriptor {
+        <<jakarta.validation.metadata>>
+    }
+    class CrossParameterDescriptor {
+        <<jakarta.validation.metadata>>
+    }
+    class ConstraintDescriptor {
+        <<jakarta.validation.metadata>>
+    }
+
+    class AbstractCascadableDescriptorImpl {
+        <<abstract>>
+    }
+    class AbstractExecutableDescriptorImpl {
+        <<abstract>>
+    }
+
+    ElementDescriptor <|.. AbstractCascadableDescriptorImpl
+    ElementDescriptor <|.. AbstractExecutableDescriptorImpl
+    ElementDescriptor <|.. BeanDescriptorImpl
+
+    BeanDescriptor <|.. BeanDescriptorImpl
+    AbstractCascadableDescriptorImpl <|-- PropertyDescriptorImpl
+    AbstractCascadableDescriptorImpl <|-- ParameterDescriptorImpl
+    AbstractCascadableDescriptorImpl <|-- ReturnValueDescriptorImpl
+    AbstractCascadableDescriptorImpl <|-- ContainerElementTypeDescriptorImpl
+    AbstractExecutableDescriptorImpl <|-- MethodDescriptorImpl
+    AbstractExecutableDescriptorImpl <|-- ConstructorDescriptorImpl
+
+    PropertyDescriptor <|.. PropertyDescriptorImpl
+    MethodDescriptor <|.. MethodDescriptorImpl
+    ConstructorDescriptor <|.. ConstructorDescriptorImpl
+    ParameterDescriptor <|.. ParameterDescriptorImpl
+    ReturnValueDescriptor <|.. ReturnValueDescriptorImpl
+    CrossParameterDescriptor <|.. CrossParameterDescriptorImpl
+    ConstraintDescriptor <|.. ConstraintDescriptorImpl
+    ElementDescriptor <.. ConstraintFinderImpl
+```
+
+### Key Implementation Details
+
+| Jakarta BV Interface | Quarkus Implementation | Location | Lines |
+|---|---|---|---|
+| `ValidationProvider` | `QuarkusValidationProvider` | `independent-projects/bean-validation/runtime` | 220 |
+| `Configuration` + `ConfigurationState` | `QuarkusConfiguration` | `independent-projects/bean-validation/runtime` | 262 |
+| `ValidatorFactory` | `QuarkusValidatorFactory` | `independent-projects/bean-validation/runtime` | 113 |
+| `Validator` | `QuarkusValidator` | `independent-projects/bean-validation/runtime` | 3,419 |
+| `ExecutableValidator` | `QuarkusExecutableValidator` | `independent-projects/bean-validation/runtime/impl` | - |
+| `ConstraintValidatorFactory` | `ArcConstraintValidatorFactory` | `extensions/bean-validator/runtime` | 54 |
+| `ConstraintValidatorFactory` | `DefaultConstraintValidatorFactory` | `independent-projects/bean-validation/runtime/impl` | - |
+| `BeanDescriptor` | `BeanDescriptorImpl` | `independent-projects/bean-validation/runtime/impl/metadata/descriptor` | 480 |
+| `PropertyDescriptor` | `PropertyDescriptorImpl` | (same package) | - |
+| `MethodDescriptor` | `MethodDescriptorImpl` | (same package) | - |
+| `ConstructorDescriptor` | `ConstructorDescriptorImpl` | (same package) | - |
+| `ConstraintDescriptor` | `ConstraintDescriptorImpl` | (same package) | - |
+| `ValidatorContext` | `QuarkusValidatorContext` | `independent-projects/bean-validation/runtime/impl` | - |
+| `MessageInterpolator` | `DefaultMessageInterpolator` | `independent-projects/bean-validation/runtime/impl` | - |
+| `TraversableResolver` | `DefaultTraversableResolver` | `independent-projects/bean-validation/runtime/impl` | - |
+
+### Runtime State Management
+
+`QuarkusValidationProvider` holds all runtime state as a single atomic `RuntimeConfig` record:
+
+```
+RuntimeConfig {
+  BeanValidationMetadata metadata          // Pre-built constraint metadata from Jandex scan
+  ConstraintValidatorFactory factory       // ArcConstraintValidatorFactory (CDI-aware)
+  Locale defaultLocale                     // Build-time configured locale
+  Map<String, Constructor<?>> literals     // Generated annotation literal constructors
+  Map<String, BeanPropertyAccessor> accs   // Generated property accessor instances
+  boolean extensionMode                    // true = Quarkus extension, false = Arquillian/TCK
+}
+```
+
+This is configured once at `STATIC_INIT` by `BeanValidatorRecorder.createValidatorFactory()` and used by all subsequent `Validation.buildDefaultValidatorFactory()` calls.
+
+---
+
 ## @BuildStep Methods Detail
 
 The `BeanValidatorProcessor` contains 10 `@BuildStep` methods executed during the Quarkus build:

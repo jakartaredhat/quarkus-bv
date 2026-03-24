@@ -71,6 +71,65 @@ graph TB
 
 **Quarkus Bean Validator** performs metadata discovery once at build time using Jandex (a bytecode index). It generates concrete Java classes (via Gizmo2) that replace reflection-based operations, enabling native image compilation and faster startup. It also transforms bytecode to remove `private` modifiers from constrained fields.
 
+### Jakarta BV API Implementation Comparison
+
+Both projects implement the same Jakarta BV specification interfaces, but with fundamentally different approaches:
+
+```mermaid
+graph TB
+    subgraph SPEC["Jakarta Bean Validation API"]
+        VP["ValidationProvider"]
+        CFG["Configuration /<br/>ConfigurationState"]
+        VF["ValidatorFactory"]
+        V["Validator /<br/>ExecutableValidator"]
+        BD["BeanDescriptor"]
+        CVF["ConstraintValidatorFactory"]
+    end
+
+    subgraph HV["Hibernate Validator Implementations"]
+        HVP["HibernateValidator<br/>+ PredefinedScopeHibernateValidator"]
+        HCFG["AbstractConfigurationImpl (32 KB)<br/>+ ConfigurationImpl<br/>+ PredefinedScopeConfigurationImpl"]
+        HVF["ValidatorFactoryImpl (20 KB)<br/>+ PredefinedScopeValidatorFactoryImpl (18 KB)"]
+        HVI["ValidatorImpl (60 KB)<br/>- BeanMetaDataManager<br/>- ConstraintValidatorManager<br/>- ValidationOrderGenerator<br/>- ValueExtractorManager"]
+        HBD["BeanDescriptorImpl<br/>extends ElementDescriptorImpl (abstract, Serializable)<br/>- PropertyDescriptorImpl<br/>- ExecutableDescriptorImpl<br/>- ConstraintDescriptorImpl (Serializable)"]
+        HCVF["DefaultConstraintValidatorFactory<br/>(reflection-based)"]
+    end
+
+    subgraph QBV["Quarkus Bean Validator Implementations"]
+        QVP["QuarkusValidationProvider (220 lines)<br/>- static RuntimeConfig record<br/>- annotation literal cache<br/>- property accessor cache"]
+        QCFG["QuarkusConfiguration (262 lines)<br/>- always ignores XML<br/>- injects BeanValidationMetadata"]
+        QVF["QuarkusValidatorFactory (113 lines)<br/>- lazy singleton QuarkusValidator"]
+        QVI["QuarkusValidator (3,419 lines)<br/>- ConcurrentHashMap caches<br/>- groupSequenceStepsCache<br/>- validatorCache<br/>- descriptorCache"]
+        QBD["BeanDescriptorImpl (480 lines)<br/>- built from ConstrainedBeanMetadata<br/>- PropertyDescriptorImpl<br/>- MethodDescriptorImpl<br/>- ConstraintDescriptorImpl"]
+        QCVF["ArcConstraintValidatorFactory (54 lines)<br/>(CDI-first, generated instantiator fallback)"]
+    end
+
+    VP --> HVP & QVP
+    CFG --> HCFG & QCFG
+    VF --> HVF & QVF
+    V --> HVI & QVI
+    BD --> HBD & QBD
+    CVF --> HCVF & QCVF
+
+    style SPEC fill:#f3e5f5,stroke:#7B1FA2
+    style HV fill:#fff3e0,stroke:#E65100
+    style QBV fill:#e3f2fd,stroke:#1565C0
+```
+
+| Jakarta BV Interface | Hibernate Validator | Quarkus Bean Validator |
+|---|---|---|
+| `ValidationProvider` | `HibernateValidator` (38 lines) + `PredefinedScopeHibernateValidator` | `QuarkusValidationProvider` (220 lines) with static `RuntimeConfig` |
+| `Configuration` | `AbstractConfigurationImpl` (32 KB) + 2 subclasses | `QuarkusConfiguration` (262 lines), always ignores XML |
+| `ValidatorFactory` | `ValidatorFactoryImpl` (20 KB) + `PredefinedScopeValidatorFactoryImpl` (18 KB) | `QuarkusValidatorFactory` (113 lines) |
+| `Validator` | `ValidatorImpl` (60 KB), also implements `ExecutableValidator` | `QuarkusValidator` (3,419 lines) + `QuarkusExecutableValidator` |
+| `ConstraintValidatorFactory` | `DefaultConstraintValidatorFactory` (reflection) | `ArcConstraintValidatorFactory` (CDI + generated instantiator) |
+| `BeanDescriptor` | `BeanDescriptorImpl` extends `ElementDescriptorImpl` (abstract, `Serializable`, `@Immutable`) | `BeanDescriptorImpl` (standalone, built from `ConstrainedBeanMetadata`) |
+| `ConstraintDescriptor` | `ConstraintDescriptorImpl` (`Serializable`, full composition support) | `ConstraintDescriptorImpl` (lightweight, no serialization) |
+| Descriptor base class | `ElementDescriptorImpl` (abstract, shared hierarchy) | `AbstractCascadableDescriptorImpl` + `AbstractExecutableDescriptorImpl` |
+| Metadata source | Runtime reflection via `BeanMetaDataManager` + 3 `MetaDataProvider`s | Build-time `BeanValidationMetadata` from Jandex scan |
+| Validator caching | `ConstraintValidatorManagerImpl` with composite cache keys | `ConcurrentHashMap<ValidatorCacheKey, ConstraintValidator>` |
+| Group ordering | `ValidationOrderGenerator` (dedicated 7-file subsystem) | Inline in `QuarkusValidator` with `groupSequenceStepsCache` |
+
 ### CDI Integration
 
 | Aspect | Quarkus (Arc) | Hibernate Validator (CDI Extension) |

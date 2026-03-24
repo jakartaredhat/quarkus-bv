@@ -119,6 +119,311 @@ graph TB
 
 ---
 
+## Jakarta Bean Validation Runtime Implementation
+
+Hibernate Validator implements the full Jakarta BV API with extended Hibernate-specific interfaces.
+
+### Jakarta BV API Implementation Class Hierarchy
+
+```mermaid
+classDiagram
+    direction TB
+
+    class ValidationProvider~T~ {
+        <<jakarta.validation.spi>>
+        +createSpecializedConfiguration(BootstrapState) T
+        +createGenericConfiguration(BootstrapState) Configuration
+        +buildValidatorFactory(ConfigurationState) ValidatorFactory
+    }
+
+    class HibernateValidator {
+        +createSpecializedConfiguration(BootstrapState) HibernateValidatorConfiguration
+        +createGenericConfiguration(BootstrapState) Configuration
+        +buildValidatorFactory(ConfigurationState) ValidatorFactory
+    }
+    ValidationProvider <|.. HibernateValidator
+
+    class PredefinedScopeHibernateValidator {
+        +createSpecializedConfiguration(BootstrapState) PredefinedScopeHibernateValidatorConfiguration
+        +buildValidatorFactory(ConfigurationState) ValidatorFactory
+    }
+    ValidationProvider <|.. PredefinedScopeHibernateValidator
+
+    class Configuration~T~ {
+        <<jakarta.validation>>
+    }
+    class ConfigurationState {
+        <<jakarta.validation.spi>>
+    }
+
+    class AbstractConfigurationImpl~T~ {
+        -ValidationBootstrapParameters validationBootstrapParameters
+        -Set~ValueExtractor~ valueExtractorDescriptors
+        -List~ConstraintMapping~ programmaticMappings
+        -boolean ignoreXmlConfiguration
+        +addMapping(InputStream) T
+        +addProperty(name, value) T
+        +buildValidatorFactory() ValidatorFactory
+    }
+    Configuration <|.. AbstractConfigurationImpl
+    ConfigurationState <|.. AbstractConfigurationImpl
+
+    class ConfigurationImpl {
+        extends AbstractConfigurationImpl~HibernateValidatorConfiguration~
+    }
+    AbstractConfigurationImpl <|-- ConfigurationImpl
+    HibernateValidator --> ConfigurationImpl : creates
+
+    class PredefinedScopeConfigurationImpl {
+        extends AbstractConfigurationImpl~PredefinedScopeHibernateValidatorConfiguration~
+    }
+    AbstractConfigurationImpl <|-- PredefinedScopeConfigurationImpl
+    PredefinedScopeHibernateValidator --> PredefinedScopeConfigurationImpl : creates
+
+    class ValidatorFactory {
+        <<jakarta.validation>>
+        +getValidator() Validator
+        +getMessageInterpolator() MessageInterpolator
+        +getConstraintValidatorFactory() ConstraintValidatorFactory
+        +close()
+    }
+
+    class HibernateValidatorFactory {
+        <<org.hibernate.validator>>
+        +usingContext() HibernateValidatorContext
+    }
+    ValidatorFactory <|-- HibernateValidatorFactory
+
+    class ValidatorFactoryImpl {
+        -ValidatorFactoryScopedContext validatorFactoryScopedContext
+        -BeanMetaDataManager beanMetaDataManager
+        -ConstraintValidatorManager constraintValidatorManager
+        -ValidationOrderGenerator validationOrderGenerator
+        -ValueExtractorManager valueExtractorManager
+        +getValidator() Validator
+        +usingContext() HibernateValidatorContext
+        +close()
+    }
+    HibernateValidatorFactory <|.. ValidatorFactoryImpl
+    HibernateValidator --> ValidatorFactoryImpl : creates
+
+    class PredefinedScopeValidatorFactoryImpl {
+        -BeanMetaDataManager beanMetaDataManager
+        -ConstraintValidatorManager constraintValidatorManager
+        +getValidator() Validator
+    }
+    HibernateValidatorFactory <|.. PredefinedScopeValidatorFactoryImpl : "PredefinedScope variant"
+    PredefinedScopeHibernateValidator --> PredefinedScopeValidatorFactoryImpl : creates
+
+    class Validator {
+        <<jakarta.validation>>
+        +validate(object, groups) Set~ConstraintViolation~
+        +validateProperty(object, propertyName, groups) Set~ConstraintViolation~
+        +validateValue(beanType, propertyName, value, groups) Set~ConstraintViolation~
+        +getConstraintsForClass(clazz) BeanDescriptor
+        +forExecutables() ExecutableValidator
+    }
+    class ExecutableValidator {
+        <<jakarta.validation.executable>>
+        +validateParameters(object, method, params, groups) Set~ConstraintViolation~
+        +validateReturnValue(object, method, returnValue, groups) Set~ConstraintViolation~
+    }
+
+    class ValidatorImpl {
+        -ValidationOrderGenerator validationOrderGenerator
+        -ConstraintValidatorFactory constraintValidatorFactory
+        -BeanMetaDataManager beanMetaDataManager
+        -ConstraintValidatorManager constraintValidatorManager
+        -ValueExtractorManager valueExtractorManager
+        -ValidatorScopedContext validatorScopedContext
+        +validate(object, groups) Set~ConstraintViolation~
+        +getConstraintsForClass(clazz) BeanDescriptor
+        +forExecutables() ExecutableValidator
+    }
+    Validator <|.. ValidatorImpl
+    ExecutableValidator <|.. ValidatorImpl
+    ValidatorFactoryImpl --> ValidatorImpl : creates
+    PredefinedScopeValidatorFactoryImpl --> ValidatorImpl : creates
+
+    class ConstraintValidatorFactory {
+        <<jakarta.validation>>
+        +getInstance(key) ConstraintValidator
+        +releaseInstance(instance)
+    }
+
+    class DefaultConstraintValidatorFactory {
+        +getInstance(key) ConstraintValidator
+    }
+    ConstraintValidatorFactory <|.. DefaultConstraintValidatorFactory
+
+    class ConstraintValidatorManager {
+        <<interface>>
+        +getInitializedValidator(type, descriptor, factory, ctx) ConstraintValidator
+        +clear()
+    }
+    ValidatorImpl --> ConstraintValidatorManager : uses
+    ValidatorImpl --> BeanMetaDataManager : uses
+
+    class BeanMetaDataManager {
+        <<interface>>
+        +getBeanMetaData(beanClass) BeanMetaData
+    }
+    class BeanMetaDataManagerImpl {
+        -ConstraintHelper constraintHelper
+        -List~MetaDataProvider~ metaDataProviders
+        -ConcurrentMap beanMetaDataCache
+    }
+    BeanMetaDataManager <|.. BeanMetaDataManagerImpl
+    ValidatorFactoryImpl --> BeanMetaDataManagerImpl : creates
+```
+
+### Descriptor Class Hierarchy (org.hibernate.validator.internal.metadata.descriptor)
+
+```mermaid
+classDiagram
+    direction TB
+
+    class ElementDescriptor {
+        <<jakarta.validation.metadata>>
+        +hasConstraints() boolean
+        +getElementClass() Class
+        +getConstraintDescriptors() Set
+        +findConstraints() ConstraintFinder
+    }
+
+    class ElementDescriptorImpl {
+        <<abstract, Serializable>>
+        -Type type
+        -Set~ConstraintDescriptorImpl~ constraintDescriptors
+        -boolean defaultGroupSequenceRedefined
+        -List~Class~ defaultGroupSequence
+    }
+    ElementDescriptor <|.. ElementDescriptorImpl
+
+    class BeanDescriptor {
+        <<jakarta.validation.metadata>>
+        +isBeanConstrained() boolean
+        +getConstrainedProperties() Set~PropertyDescriptor~
+        +getConstraintsForMethod(name, params) MethodDescriptor
+        +getConstrainedMethods(type) Set~MethodDescriptor~
+        +getConstraintsForConstructor(params) ConstructorDescriptor
+    }
+
+    class BeanDescriptorImpl {
+        -Map~String,PropertyDescriptor~ constrainedProperties
+        -Map~Signature,ExecutableDescriptorImpl~ constrainedMethods
+        -Map~Signature,ConstructorDescriptor~ constrainedConstructors
+    }
+    ElementDescriptorImpl <|-- BeanDescriptorImpl
+    BeanDescriptor <|.. BeanDescriptorImpl
+
+    class PropertyDescriptorImpl {
+        -String propertyName
+        -Set~ContainerElementTypeDescriptor~ constrainedContainerElementTypes
+        -Set~GroupConversionDescriptor~ groupConversions
+        -boolean isCascaded
+    }
+    ElementDescriptorImpl <|-- PropertyDescriptorImpl
+
+    class ExecutableDescriptorImpl {
+        -String name
+        -List~ParameterDescriptor~ parameters
+        -ReturnValueDescriptorImpl returnValueDescriptor
+        -CrossParameterDescriptorImpl crossParameterDescriptor
+        -boolean isGetter
+    }
+    ElementDescriptorImpl <|-- ExecutableDescriptorImpl
+
+    class ParameterDescriptorImpl {
+        -int index
+        -String name
+    }
+    ElementDescriptorImpl <|-- ParameterDescriptorImpl
+
+    class ReturnValueDescriptorImpl {
+        -boolean isCascaded
+    }
+    ElementDescriptorImpl <|-- ReturnValueDescriptorImpl
+
+    class CrossParameterDescriptorImpl {
+    }
+    ElementDescriptorImpl <|-- CrossParameterDescriptorImpl
+
+    class ConstraintDescriptorImpl~T~ {
+        <<Serializable>>
+        -T annotation
+        -Set~Class~ groups
+        -Set~Class~ payload
+        -ConstraintType constraintType
+        -Map~String,Object~ attributes
+        -Set~ConstraintDescriptor~ composingConstraints
+        -boolean isReportAsSingleViolation
+    }
+
+    class ContainerElementTypeDescriptorImpl {
+        -Integer typeArgumentIndex
+        -Class containerClass
+    }
+    ElementDescriptorImpl <|-- ContainerElementTypeDescriptorImpl
+
+    class ClassDescriptorImpl {
+    }
+    ElementDescriptorImpl <|-- ClassDescriptorImpl
+
+    ValidatorImpl --> BeanDescriptorImpl : "getConstraintsForClass() returns"
+    BeanDescriptorImpl --> PropertyDescriptorImpl : contains
+    BeanDescriptorImpl --> ExecutableDescriptorImpl : "methods"
+    ExecutableDescriptorImpl --> ParameterDescriptorImpl : contains
+    ExecutableDescriptorImpl --> ReturnValueDescriptorImpl : contains
+    ExecutableDescriptorImpl --> CrossParameterDescriptorImpl : contains
+```
+
+### Key Implementation Details
+
+| Jakarta BV Interface | Hibernate Validator Implementation | Key Characteristics |
+|---|---|---|
+| `ValidationProvider` | `HibernateValidator` (38 lines) | SPI entry point, registered in META-INF/services |
+| `ValidationProvider` | `PredefinedScopeHibernateValidator` | Optimized for known-scope validation |
+| `Configuration` | `AbstractConfigurationImpl` (32 KB) | Base with full XML + programmatic support |
+| `Configuration` | `ConfigurationImpl` | Standard HV configuration |
+| `Configuration` | `PredefinedScopeConfigurationImpl` | Pre-scoped configuration |
+| `ValidatorFactory` | `ValidatorFactoryImpl` (20 KB) | Thread-safe, manages all subsystems |
+| `ValidatorFactory` | `PredefinedScopeValidatorFactoryImpl` (18 KB) | Pre-built metadata, no dynamic expansion |
+| `Validator` + `ExecutableValidator` | `ValidatorImpl` (60 KB) | Full validation engine, group ordering, cascading |
+| `ConstraintValidatorFactory` | `DefaultConstraintValidatorFactory` | Reflection-based instantiation |
+| `BeanDescriptor` | `BeanDescriptorImpl` (128 lines) | Immutable, extends `ElementDescriptorImpl` |
+| `PropertyDescriptor` | `PropertyDescriptorImpl` | With cascading and container element support |
+| `MethodDescriptor` | `ExecutableDescriptorImpl` | Shared with constructors, has isGetter flag |
+| `ConstraintDescriptor` | `ConstraintDescriptorImpl` (Serializable) | Full composition support, constraint type enum |
+| `ValidatorContext` | `ValidatorContextImpl` | Customizes per-validator settings |
+
+### ValidatorImpl Internal Dependencies
+
+```mermaid
+graph LR
+    VI["ValidatorImpl<br/>(60 KB)"] --> BMM["BeanMetaDataManager<br/>(metadata cache)"]
+    VI --> CVM["ConstraintValidatorManager<br/>(validator cache)"]
+    VI --> VOG["ValidationOrderGenerator<br/>(group ordering)"]
+    VI --> VEM["ValueExtractorManager<br/>(container extraction)"]
+    VI --> VSC["ValidatorScopedContext<br/>(interpolator, resolver, etc.)"]
+    VI --> VCB["ValidationContextBuilder<br/>(creates validation contexts)"]
+
+    BMM --> BM["BeanMetaData<br/>(per-class constraints)"]
+    BM --> MC["MetaConstraint<br/>(individual constraints)"]
+    BM --> PM["PropertyMetaData"]
+    BM --> EM["ExecutableMetaData"]
+
+    CVM --> CVF["ConstraintValidatorFactory"]
+    VCB --> BBVC["BaseBeanValidationContext"]
+    BBVC --> VC["ValueContext"]
+
+    style VI fill:#e3f2fd,stroke:#1565C0
+    style BMM fill:#e8f5e9,stroke:#2E7D32
+    style CVM fill:#fff3e0,stroke:#E65100
+```
+
+---
+
 ## Engine Internal Package Breakdown
 
 | Package | Files | Purpose |
